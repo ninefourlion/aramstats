@@ -1,0 +1,108 @@
+import gspread
+import bs4
+import requests
+import time
+
+
+# required setup for google sheets
+gc = gspread.service_account(filename='credentials.json')
+sh = gc.open_by_key('127JOVxUEbE6DZ2lTd2Y1KfksjgkWzhGNb0V4XFYbwSo')
+worksheet = sh.sheet1
+
+# set up empty list that contains all the data that will be posted to the google sheets
+batchlist=[]
+
+print("Start : %s" % time.ctime())
+
+# set up variables for final summary
+successes = 0
+failures = 0
+failedchamps = []
+
+# set up function for pulling items using specificed CSS Selector
+def items(selection_txt):
+    item = soup.select(selection_txt)
+    img = item[0].img
+    strng = str(img)
+    begindex = strng.find("=")
+    endindex = strng.find("class") - 2
+    build = strng[begindex +2:endindex]
+    builds.append(build)
+
+# for loop that pulls data for each champion in the game
+for i in range(1,155):
+    try:
+        values = []
+        champselect = worksheet.cell(1+i, 1).value
+        url = "https://www.metasrc.com/aram/na/champion/"+champselect
+        res = requests.get(url)
+        
+        # checks if there's an error accessing the website
+        res.raise_for_status()
+        
+        # navigates to CSS selector containing the data
+        soup = bs4.BeautifulSoup(res.text, "html.parser")
+        elems = soup.select('#splash-content > div._5bxv5t')
+        stats = elems[0].text
+        
+        # splices text string from website into values
+        TierIndex = stats.find(":")
+        ScoreIndex = stats.find("Score:")
+        WinRateIndex = stats.rfind("Win Rate:")
+        PickRateIndex= stats.rfind("Pick Rate:")
+        KDARateIndex = stats.find("KDA")
+        
+        # clean final variables 
+        tier = stats[TierIndex +1 :ScoreIndex]
+        winrate = stats[WinRateIndex+9:PickRateIndex]
+        pickrate = stats[PickRateIndex+10:KDARateIndex]  
+        
+        # finds most built items via CSS selector and pulls img alt text of the item
+        builds = []
+        for x in range(1, 7): # Range is [1, 6] inclusive
+            try:
+                selection_txt = '#content > div._qngo9y > div:nth-child(4) > div:nth-child(1) > div:nth-child(3) > div > div:nth-child(1) > div:nth-child({}) > div._hmag7l.tooltipped > div._5lds7o-{}'.format(x, 1 if x == 2 else 3)  
+                items(selection_txt)
+            
+            except:
+                try:
+                    selection_txt = '#content > div._qngo9y > div:nth-child(4) > div:nth-child(1) > div:nth-child(3) > div > div:nth-child(1) > div:nth-child({}) > div._hmag7l.tooltipped > div._5lds7o-{}'.format(x, 1 if x == 4 else 3)
+                    items(selection_txt)
+            
+                except:
+                    try:
+                        selection_txt = '#content > div._qngo9y > div:nth-child(4) > div:nth-child(1) > div:nth-child(3) > div > div:nth-child(1) > div:nth-child({}) > div._hmag7l.tooltipped > div._5lds7o-{}'.format(x, 1 if x == 3 else 3)
+                        items(selection_txt)
+                        
+                    except:
+                            selection_txt = '#content > div._qngo9y > div:nth-child(4) > div:nth-child(1) > div:nth-child(3) > div > div:nth-child(1) > div:nth-child({}) > div._hmag7l.tooltipped > div._5lds7o-{}'.format(x, 1 if x == 1 else 3)
+                            items(selection_txt)
+
+        # adds pulled data to the values list
+        values.append(tier)
+        values.append(winrate)
+        values.append(pickrate)
+        values.extend(builds)
+        
+        # adds coordinates and the champ's list of values to the dataset to be posted
+        batchlist.append({'range' : f'B{1+i}:K{1+i}', 'values' : [values]})
+        
+        # buffer one second to avoid 403's and write limits
+        time.sleep(1)
+        
+        print(champselect + "'s stats were pulled successfully.")
+        successes = int(successes+1)
+
+    except:
+        print(champselect + "'s stats were not successfully pulled.")
+        failures = int(failures+1)
+        failedchamps.append(champselect)
+
+# batch updates google sheet with one call
+worksheet.batch_update(batchlist, value_input_option='USER_ENTERED')
+
+# prints summary
+print(str(successes) + " successful stat pulls.")
+print(str(failures) + " unsuccessful stat pulls.")
+print("Failures:")
+print(str(failedchamps))
